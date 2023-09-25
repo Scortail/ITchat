@@ -19,6 +19,8 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 
 /**
  * Processus serveur qui ecoute les connexion entrantes,
@@ -31,9 +33,13 @@ public class Server extends Thread implements ITchat {
     private ServerUI serverUI;
     private int port;
     private InetAddress ipAdress;
+    private Selector selector;
     private static Map<SocketChannel, String> connectedClients = new HashMap<>();
+    private static Map<SocketChannel, Long> nonidentifiedClients = new HashMap<>();
+    private static final long USER_TIMEOUT = 10000;
     private ServerSocketChannel serverSocketChannel;
     private ByteBuffer buffer = ByteBuffer.allocate(ITchat.BUFFER_SIZE);
+    private DateTimeFormatter formatter = DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm:ss");
 
     public Server(int port, InetAddress ipAdress, ServerUI serverUI) {
 
@@ -51,21 +57,21 @@ public class Server extends Thread implements ITchat {
             serverSocketChannel.bind(new InetSocketAddress(ipAdress, port));
 
             // Creation du selecteur et enregistrement
-            Selector selector = Selector.open();
+            selector = Selector.open();
             serverSocketChannel.register(selector, SelectionKey.OP_ACCEPT);
 
             System.out.println("Chat Server has started on port : " + port);
 
             // Boucle qui fait tourner le serveur
             while (serverUI.isRunning()) {
-                int readyChannels = selector.select();
+                int readyChannels = selector.select(1000);
 
                 if (readyChannels == 0) {
                     continue;
                 }
                 Iterator<SelectionKey> keyIterator = selector.selectedKeys().iterator();
 
-                // Boucle pour traiter ce qui arrive au serveur
+                // Boucle pour traiter le flux entrant
                 while (keyIterator.hasNext()) {
                     SelectionKey key = keyIterator.next();
 
@@ -74,10 +80,28 @@ public class Server extends Thread implements ITchat {
                     } else if (key.isReadable()) {
                         readAndSentMessage((SocketChannel) key.channel());
                     }
-
                     keyIterator.remove();
                 }
+                // Vérifiez si le délai d'attente du nom d'utilisateur est dépassé pour chaque
+                // client non identifié
+                long currentTime = System.currentTimeMillis();
+                List<SocketChannel> clientsToRemove = new ArrayList<>();
+                for (Map.Entry<SocketChannel, Long> entry : nonidentifiedClients.entrySet()) {
+                    SocketChannel channel = entry.getKey();
+                    long connectionTime = entry.getValue();
+                    if (currentTime - connectionTime > USER_TIMEOUT) {
+                        clientsToRemove.add(channel);
+                        System.out.println(
+                                "Délai d'attente pour le nom d'utilisateur dépassé, fermeture de la connexion.");
+                    }
+                }
+                // Supprimez les clients non identifiés dont le délai d'attente a été dépassé
+                for (SocketChannel channelToRemove : clientsToRemove) {
+                    nonidentifiedClients.remove(channelToRemove);
+                    channelToRemove.close();
+                }
             }
+            stopServer();
         } catch (IOException e) {
             e.printStackTrace();
         }
@@ -100,12 +124,18 @@ public class Server extends Thread implements ITchat {
             }
             if (bytesRead == -1) {
                 // Le client a fermé la connexion.
-                // disconnectClient(clientChannel);
+                disconnectClient(clientChannel);
+                System.out.println("test");
+                return null;
+            } else {
+                Message message = Message.fromJson(messageBuilder.toString());
+                return message;
             }
-            Message message = Message.fromJson(messageBuilder.toString());
-            return message;
+
         } catch (IOException e) {
-            e.printStackTrace();
+            sendLogToUI(LocalDateTime.now().format(formatter) + " : " + "La connexion avec "
+                    + connectedClients.get(clientChannel) + " s'est interrompu");
+            disconnectClient(clientChannel);
             return null;
         }
     }
@@ -117,21 +147,38 @@ public class Server extends Thread implements ITchat {
         clientChannel.configureBlocking(false);
         clientChannel.register(selector, SelectionKey.OP_READ);
 
-        // Enregistre la connexion avec le nom du client
-        connectedClients.put(clientChannel, "");
+        // Enregistre l'heure à laquelle le client s'est connecté
+        long connectionTime = System.currentTimeMillis();
+        nonidentifiedClients.put(clientChannel, connectionTime);
         System.out.println("Nouvelle connexion client établie");
     }
 
     public void readAndSentMessage(SocketChannel clientChannel) {
 
         Message message = read(clientChannel);
-        if (message != null) {
-            sendLogToUI(message.getUser() + " : " + message.getMessage());
-            broadcastMessage(message);
+        if (message != null && message.getUser() != null) {
+
+            // Message de connexion
+            if (message.getType().equals("cm") && nonidentifiedClients.containsKey(clientChannel)) {
+                sendLogToUI(LocalDateTime.now().format(formatter) + " " + message.getUser() + " s'est connecté.");
+                nonidentifiedClients.remove(clientChannel);
+                connectedClients.put(clientChannel, message.getUser());
+
+                // Message de déconnexion
+            } else if (message.getType().equals("dm")) {
+                disconnectClient(clientChannel);
+
+                // gerer les gm et pm
+            } else {
+                sendLogToUI(
+                        LocalDateTime.now().format(formatter) + " " + message.getUser() + " : " + message.getMessage());
+                broadcastMessage(message);
+            }
         }
     }
 
     private void broadcastMessage(Message message) {
+
         try {
             // Conversion de la chaîne JSON en tableau d'octets
             byte[] messageBytes = message.toJson().getBytes(StandardCharsets.UTF_8);
@@ -162,6 +209,41 @@ public class Server extends Thread implements ITchat {
             e.printStackTrace();
         }
         buffer.clear(); // Réinitialiser le buffer après l'envoi complet.
+    }
+
+    public void disconnectClient(SocketChannel clientChannel) {
+        try {
+            // Ferme la connexion avec le serveur
+            if (clientChannel != null && clientChannel.isConnected()) {
+                clientChannel.close();
+                sendLogToUI(LocalDateTime.now().format(formatter) + " " + connectedClients.get(clientChannel)
+                        + "s'est déconnecté.");
+                connectedClients.remove(clientChannel);
+            }
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
+
+    public void stopServer() {
+        try {
+            // Fermer toutes les connexions client
+            for (SocketChannel clientChannel : connectedClients.keySet()) {
+                disconnectClient(clientChannel);
+            }
+
+            // Fermer le sélecteur
+            if (selector != null && selector.isOpen()) {
+                selector.close();
+            }
+
+            // Fermer le socket serveur
+            if (serverSocketChannel != null && serverSocketChannel.isOpen()) {
+                serverSocketChannel.close();
+            }
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
     }
 
     /**

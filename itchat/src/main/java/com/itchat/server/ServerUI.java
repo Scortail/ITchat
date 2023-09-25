@@ -156,6 +156,8 @@ public class ServerUI extends Application implements EventHandler {
 
         // On marque l'arret et on attends l'arret du server
         running = false;
+
+        setNonRunningState();
     }
 
     /**

@@ -48,6 +48,8 @@ public class Client extends Thread implements ITchat {
             while (!socketChannel.finishConnect()) {
                 continue;
             }
+            // Envoi d'un message vide permettant au serveur d'identifier le client
+            sendMessage("", "cm");
             System.out.println("Connection etablie avec le serveur");
 
             // Creation du selecteur et enregistrement
@@ -57,8 +59,8 @@ public class Client extends Thread implements ITchat {
             // Envoyez le nom d'utilisateur au serveur. a fairrrreeeeeeeeeeeeeeeeeeeeeee
 
             while (clientUI.isRunning()) {
-                int readyChannels = selector.select();
-
+                int readyChannels = selector.select(1000);
+                System.out.println(readyChannels);
                 if (readyChannels == 0) {
                     continue;
                 }
@@ -70,22 +72,25 @@ public class Client extends Thread implements ITchat {
                     if (key.isReadable()) {
                         readMessage((SocketChannel) key.channel());
                     }
-
                     keyIterator.remove();
                 }
+
             }
+            disconnect();
+
         } catch (ConnectException ce) {
+            clientUI.disconnectFromServer();
             clientUI.appendMessage("Impossible de se connecter au serveur");
-        } catch (IOException e) {
-            e.printStackTrace();
+        } catch (IOException ioe) {
+            clientUI.appendMessage("Vous avez était deconnecté  du serveur");
         }
     }
 
     // Méthode pour envoyer un message au serveur en utilisant le SocketChannel
-    public void sendMessage(String messageText) {
+    public void sendMessage(String messageText, String type) {
         try {
             // Sérialisation de l'objet en JSON
-            String messageJson = new Message(userName, messageText).toJson();
+            String messageJson = new Message(userName, messageText, type).toJson();
 
             // Conversion de la chaîne JSON en tableau d'octets
             byte[] messageBytes = messageJson.getBytes(StandardCharsets.UTF_8);
@@ -114,33 +119,41 @@ public class Client extends Thread implements ITchat {
         }
     }
 
-    public void readMessage(SocketChannel clientChannel) {
+    public void readMessage(SocketChannel clientChannel) throws IOException {
         ByteBuffer buffer = ByteBuffer.allocate(ITchat.BUFFER_SIZE);
         StringBuilder messageBuilder = new StringBuilder(); // Utilisation d'un StringBuilder pour construire la chaîne
-                                                            // de caractères.
+        // de caractères.
+        int bytesRead;
+        while ((bytesRead = clientChannel.read(buffer)) > 0) {
+            // Passer en mode lecture pour lire les données du tampon.
+            buffer.flip();
 
-        try {
-            int bytesRead;
-            while ((bytesRead = clientChannel.read(buffer)) > 0) {
-                // Passer en mode lecture pour lire les données du tampon.
-                buffer.flip();
-
-                while (buffer.hasRemaining()) {
-                    char c = (char) buffer.get(); // Lire un caractère du tampon.
-                    messageBuilder.append(c); // Ajouter le caractère au StringBuilder.
-                }
-
-                // Effacer le tampon pour qu'il soit prêt pour la prochaine lecture.
-                buffer.clear();
+            while (buffer.hasRemaining()) {
+                char c = (char) buffer.get(); // Lire un caractère du tampon.
+                messageBuilder.append(c); // Ajouter le caractère au StringBuilder.
             }
-
-            // a revoir
-            if (bytesRead == -1) {
-                // Le client a fermé la connexion.
-                // disconnectClient(clientChannel);
-            }
+            // Effacer le tampon pour qu'il soit prêt pour la prochaine lecture.
+            buffer.clear();
+        }
+        if (bytesRead == -1) {
+            // Le serveur a fermé la connexion.
+            clientUI.disconnectFromServer();
+            clientUI.appendMessage("Connexion avec le serveur perdu");
+        } else {
             afficherMessage(Message.fromJson(messageBuilder.toString()));
+        }
+    }
 
+    // Permet de se déconnecter du serveur
+    public void disconnect() {
+        try {
+            // Envoie un message de deconnexion simple au serveur
+            sendMessage("", "dm");
+
+            // Ferme la connexion avec le serveur
+            if (socketChannel != null && socketChannel.isConnected()) {
+                socketChannel.close();
+            }
         } catch (IOException e) {
             e.printStackTrace();
         }
@@ -148,7 +161,7 @@ public class Client extends Thread implements ITchat {
 
     // Prend un Message en paramètre et l'affiche au client
     public void afficherMessage(Message message) {
-        clientUI.appendMessage(System.getProperty("line.separator") + message.getUser() + " : " + message.getMessage());
+        clientUI.appendMessage(message.getUser() + " : " + message.getMessage());
     }
 
 }

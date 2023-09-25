@@ -8,11 +8,15 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 public class Message {
     private final String user;
     private final String message;
+    private String type; // pm : private message, gm : global message, cm : connexion message, dm :
+                         // disconnection message
 
     @JsonCreator
-    public Message(@JsonProperty("user") String user, @JsonProperty("message") String message) {
+    public Message(@JsonProperty("user") String user, @JsonProperty("message") String message,
+            @JsonProperty("tyoe") String type) {
         this.user = user;
         this.message = message;
+        this.type = type;
     }
 
     public String getUser() {
@@ -21,6 +25,10 @@ public class Message {
 
     public String getMessage() {
         return message;
+    }
+
+    public String getType() {
+        return type;
     }
 
     // Méthode pour sérialiser un objet Message en JSON

@@ -113,7 +113,7 @@ public class ClientUI extends Application implements EventHandler {
      * @param message
      */
     public void appendMessage(String message) {
-        textArea.appendText(message);
+        textArea.appendText(System.getProperty("line.separator") + message);
     }
 
     /**
@@ -146,28 +146,24 @@ public class ClientUI extends Application implements EventHandler {
         }
 
         try {
-            // Récupérez les informations d'adresse IP et de port entrées par l'utilisateur.
+            // Récupére les informations d'adresse IP et de port entrées par l'utilisateur.
             InetAddress serverIP = InetAddress.getByName(ip.getText().trim());
             int serverPort = Integer.parseInt(port.getText().trim());
             String userName = nickname.getText().trim();
 
-            // Créez une instance de la classe Client et démarrez-la.
+            // Crée une instance de la classe Client et la lance.
             client = new Client(serverIP, serverPort, userName, this);
+            running = true; // Changement de l'etat du client
             client.start();
 
             // Changement d'état de l'IHM
             setConnectedState();
+            System.out.println(running + "1");
         } catch (NumberFormatException e) {
             setStatus("Le port doit être un nombre valide");
         } catch (IOException e) {
             setStatus("Erreur lors de la connexion au serveur : " + e.getMessage());
         }
-
-        // Changement de l etat du client
-        running = true;
-
-        // Changement d etat de l'IHM
-        setConnectedState();
     }
 
     /**
@@ -177,6 +173,7 @@ public class ClientUI extends Application implements EventHandler {
      */
     public void disconnectFromServer() {
         this.running = false;
+        setDisconnectedState();
     }
 
     /**
@@ -211,7 +208,7 @@ public class ClientUI extends Application implements EventHandler {
             String messageText = input.getText().trim();
 
             // Envoi le message au client pour qu'il puisse l'envoyer au serveur.
-            client.sendMessage(messageText);
+            client.sendMessage(messageText, "gm");
             input.setText("");
         }
     }
