@@ -88,6 +88,7 @@ public class ClientUI extends Application implements EventHandler {
         connect.setDisable(false);
         disconnect.setDisable(true);
         input.setDisable(true);
+        setStatus("Pret");
     }
 
     public void setConnectedState() {
@@ -96,6 +97,7 @@ public class ClientUI extends Application implements EventHandler {
         connect.setDisable(true);
         disconnect.setDisable(false);
         input.setDisable(false);
+        setStatus("Connecté au serveur");
     }
 
     /**
@@ -158,7 +160,7 @@ public class ClientUI extends Application implements EventHandler {
 
             // Changement d'état de l'IHM
             setConnectedState();
-            System.out.println(running + "1");
+
         } catch (NumberFormatException e) {
             setStatus("Le port doit être un nombre valide");
         } catch (IOException e) {

@@ -77,6 +77,7 @@ public class Server extends Thread implements ITchat {
 
                     if (key.isAcceptable()) {
                         acceptClientConnection(serverSocketChannel, selector);
+
                     } else if (key.isReadable()) {
                         readAndSentMessage((SocketChannel) key.channel());
                     }
@@ -125,7 +126,6 @@ public class Server extends Thread implements ITchat {
             if (bytesRead == -1) {
                 // Le client a fermé la connexion.
                 disconnectClient(clientChannel);
-                System.out.println("test");
                 return null;
             } else {
                 Message message = Message.fromJson(messageBuilder.toString());

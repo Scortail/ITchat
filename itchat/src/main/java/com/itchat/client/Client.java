@@ -39,28 +39,18 @@ public class Client extends Thread implements ITchat {
     public void run() {
         try {
 
-            // Connection au serveur avec les sockets channels
+            // Ouverture du channel client
             socketChannel = SocketChannel.open();
             socketChannel.configureBlocking(false);
             socketChannel.connect(new InetSocketAddress(serverIP, serverPort));
-            // On attend que la connection s'établisse, elle genèrera une exception si la
-            // connection prend trop de temps
-            while (!socketChannel.finishConnect()) {
-                continue;
-            }
-            // Envoi d'un message vide permettant au serveur d'identifier le client
-            sendMessage("", "cm");
-            System.out.println("Connection etablie avec le serveur");
 
-            // Creation du selecteur et enregistrement
+            // Enregistrement du SocketChannel sur un selecteur
             selector = Selector.open();
-            socketChannel.register(selector, SelectionKey.OP_READ);
+            socketChannel.register(selector, SelectionKey.OP_CONNECT);
 
-            // Envoyez le nom d'utilisateur au serveur. a fairrrreeeeeeeeeeeeeeeeeeeeeee
-
+            // Boucle qui fait tourner le Client
             while (clientUI.isRunning()) {
                 int readyChannels = selector.select(1000);
-                System.out.println(readyChannels);
                 if (readyChannels == 0) {
                     continue;
                 }
@@ -71,10 +61,18 @@ public class Client extends Thread implements ITchat {
                     SelectionKey key = keyIterator.next();
                     if (key.isReadable()) {
                         readMessage((SocketChannel) key.channel());
+
+                    } else if (key.isConnectable()) {
+                        // Finalisation de la connexion et changement de l'interet via le selecteur pour
+                        // la lecture
+                        socketChannel.finishConnect();
+                        socketChannel.register(selector, SelectionKey.OP_READ);
+
+                        // Envoi d'un message permettant au serveur d'identifier le client
+                        sendMessage("", "cm");
                     }
                     keyIterator.remove();
                 }
-
             }
             disconnect();
 
