@@ -74,7 +74,6 @@ public class Server extends Thread implements ITchat {
 
                 // Boucle pour traiter le flux entrant
                 while (keyIterator.hasNext()) {
-                    System.out.println("test" + selector.keys().size());
                     SelectionKey key = keyIterator.next();
 
                     if (!key.isValid()) {
@@ -92,14 +91,14 @@ public class Server extends Thread implements ITchat {
                     }
                     keyIterator.remove();
                 }
-                // Vérifiez si le délai d'attente du nom d'utilisateur est dépassé pour chaque
+                // Vérifie si le délai d'attente du nom d'utilisateur est dépassé pour chaque
                 // client non identifié
                 long currentTime = System.currentTimeMillis();
                 for (Map.Entry<SocketChannel, Long> entry : nonidentifiedClients.entrySet()) {
                     SocketChannel channel = entry.getKey();
                     long connectionTime = entry.getValue();
                     if (currentTime - connectionTime > USER_TIMEOUT) {
-                        // Supprimez les clients non identifiés dont le délai d'attente a été dépassé
+                        // Supprime les clients non identifiés dont le délai d'attente a été dépassé
                         System.out.println(
                                 "Délai d'attente pour le nom d'utilisateur dépassé, fermeture de la connexion.");
                         nonidentifiedClients.remove(channel);
@@ -114,6 +113,9 @@ public class Server extends Thread implements ITchat {
         }
     }
 
+    /**
+     * Lit un message qui arrive au serveur
+     */
     public Message read(SocketChannel clientChannel) {
         StringBuilder messageBuilder = new StringBuilder(); // Utilisation d'un StringBuilder pour construire la chaîne
                                                             // de caractères.
@@ -147,6 +149,9 @@ public class Server extends Thread implements ITchat {
         }
     }
 
+    /**
+     * Permet d'accepter une nouvelle connection d'un client et de l'enregistrer
+     */
     private void acceptClientConnection(ServerSocketChannel serverSocketChannel, Selector selector)
             throws IOException {
 
@@ -164,8 +169,10 @@ public class Server extends Thread implements ITchat {
         System.out.println("Nouvelle connexion client établie");
     }
 
+    /**
+     * Permet de gérer l'envoi de message
+     */
     public void readAndSentMessage(SocketChannel clientChannel) {
-        System.out.println("je suis :" + currentThread());
 
         Message message = read(clientChannel);
         if (message != null && message.getUser() != null) {
@@ -182,15 +189,18 @@ public class Server extends Thread implements ITchat {
                 disconnectClient(clientChannel);
 
                 // gerer les gm et pm
-            } else {
-                sendLogToUI(
-                        LocalDateTime.now().format(formatter) + " " + message.getUser() + " : " + message.getMessage());
+            } else if (message.getType().equals("gm")) {
                 broadcastMessage(message);
+            } else if (message.getType().equals("pm")) {
+                sendPrivateMessage(message);
             }
         }
         connectedClients.get(clientChannel).set(1, false);
     }
 
+    /**
+     * Envoi un message à tous les clients
+     */
     private void broadcastMessage(Message message) {
         ByteBuffer buffer = ByteBuffer.allocate(ITchat.BUFFER_SIZE);
 
@@ -213,19 +223,81 @@ public class Server extends Thread implements ITchat {
                     SocketChannel channel = entry.getKey();
                     if (channel.isOpen()) {
                         channel.write(buffer);
-                        buffer.rewind(); // Réinitialiser la position du buffer
+                        buffer.rewind(); // Réinitialise la position du buffer
                     }
                 }
-
                 bytesWritten += bytesToWrite;
             }
+            sendLogToUI(
+                    LocalDateTime.now().format(formatter) + " " + message.getUser() + " : " + message.getMessage());
         } catch (IOException e) {
-            // Gérer l'exception d'écriture.
             e.printStackTrace();
         }
         buffer.clear(); // Réinitialiser le buffer après l'envoi complet.
     }
 
+    /**
+     * Permet l'envoi d'un message privé
+     */
+    private void sendPrivateMessage(Message message) {
+        ByteBuffer buffer = ByteBuffer.allocate(ITchat.BUFFER_SIZE);
+        SocketChannel sender = null;
+        SocketChannel receiver = null;
+        Boolean validReceiver = false;
+        // On récupère les socket channel associer aux utilisateurs et on vérifie que le
+        // destinataire existe
+        for (Map.Entry<SocketChannel, ArrayList<Object>> entry : connectedClients.entrySet()) {
+            ArrayList<Object> values = entry.getValue();
+            String stringValue = (String) values.get(0);
+            if (stringValue.equals(message.getUser())) {
+                sender = entry.getKey();
+            } else if (stringValue.equals(message.getDestinataire())) {
+                receiver = entry.getKey();
+                validReceiver = true;
+            }
+        }
+        // Envoi des logs
+        sendLogToUI(
+                LocalDateTime.now().format(formatter) + " From : " + message.getUser() + " to : "
+                        + message.getDestinataire() + " : " + message.getMessage());
+        if (validReceiver.equals(false)) {
+            sendLogToUI(LocalDateTime.now().format(formatter) + " " + message.getDestinataire() + " n'existe pas");
+            message = new Message("Server", message.getDestinataire() + " n'existe pas", "gm", "");
+        }
+
+        try {
+            // Conversion de la chaîne JSON en tableau d'octets
+            byte[] messageBytes = message.toJson().getBytes(StandardCharsets.UTF_8);
+
+            // Compteur pour suivre le nombre d'octets déjà écrits
+            int bytesWritten = 0;
+
+            // Envoie du message au fur et à mesure
+            while (bytesWritten < messageBytes.length) {
+                buffer.clear();
+                int bytesToWrite = Math.min(buffer.remaining(), messageBytes.length - bytesWritten);
+                buffer.put(messageBytes, bytesWritten, bytesToWrite);
+                buffer.flip();
+
+                // Envoie des données à l'envoyeur
+                if (!sender.equals(null) && sender.isOpen()) {
+                    sender.write(buffer);
+                    buffer.rewind(); // Réinitialise la position du buffer
+                }
+                // Envoie des données au receveur
+                if (validReceiver && receiver.isOpen()) {
+                    receiver.write(buffer);
+                }
+                bytesWritten += bytesToWrite;
+            }
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
+
+    /**
+     * Déconnecte un client
+     */
     public void disconnectClient(SocketChannel clientChannel) {
         try {
             // Ferme la connexion avec le serveur
@@ -240,24 +312,29 @@ public class Server extends Thread implements ITchat {
         }
     }
 
+    /**
+     * Arrete le serveur
+     */
     public void stopServer() {
         try {
 
-            // Arrêtez le pool de threads
+            // Arrête le pool de threads
             threadPool.shutdown();
-            // Attendre que toutes les tâches en cours se terminent (ou délai d'attente)
-            threadPool.awaitTermination(10, TimeUnit.SECONDS); // Ajustez le délai d'attente si nécessaire
-            // Fermer toutes les connexions client
+
+            // Attend que toutes les tâches en cours se terminent
+            threadPool.awaitTermination(10, TimeUnit.SECONDS); // Delai d'attente de 10 secondes
+
+            // Ferme toutes les connexions client
             for (SocketChannel clientChannel : connectedClients.keySet()) {
                 disconnectClient(clientChannel);
             }
 
-            // Fermer le sélecteur
+            // Ferme le sélecteur
             if (selector != null && selector.isOpen()) {
                 selector.close();
             }
 
-            // Fermer le socket serveur
+            // Ferme le socket serveur
             if (serverSocketChannel != null && serverSocketChannel.isOpen()) {
                 serverSocketChannel.close();
             }

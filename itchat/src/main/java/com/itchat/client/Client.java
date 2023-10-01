@@ -97,11 +97,14 @@ public class Client extends Thread implements ITchat {
         }
     }
 
-    // Méthode pour envoyer un message au serveur en utilisant le SocketChannel
-    public void sendMessage(String messageText, String type) {
+    /**
+     * Envoi un message au serveur en utilisant le SocketChannel et en specifiant un
+     * destinataire
+     */
+    public void sendMessage(String messageText, String type, String destinataire) {
         try {
             // Sérialisation de l'objet en JSON
-            String messageJson = new Message(userName, messageText, type).toJson();
+            String messageJson = new Message(userName, messageText, type, destinataire).toJson();
 
             // Conversion de la chaîne JSON en tableau d'octets
             byte[] messageBytes = messageJson.getBytes(StandardCharsets.UTF_8);
@@ -133,13 +136,24 @@ public class Client extends Thread implements ITchat {
         }
     }
 
+    /**
+     * Envoi un message au serveur en utilisant le SocketChannel sans réel
+     * destinataire
+     */
+    public void sendMessage(String messageText, String type) {
+        sendMessage(messageText, type, "");
+    }
+
+    /**
+     * Lit un message envoyé par le serveur et l'affiche dans l'interface
+     */
     public void readMessage(SocketChannel clientChannel) throws IOException {
         ByteBuffer buffer = ByteBuffer.allocate(ITchat.BUFFER_SIZE);
         StringBuilder messageBuilder = new StringBuilder(); // Utilisation d'un StringBuilder pour construire la chaîne
         // de caractères.
         int bytesRead;
         while ((bytesRead = clientChannel.read(buffer)) > 0) {
-            // Passer en mode lecture pour lire les données du tampon.
+            // Passe en mode lecture pour lire les données du tampon.
             buffer.flip();
 
             while (buffer.hasRemaining()) {
@@ -158,7 +172,9 @@ public class Client extends Thread implements ITchat {
         }
     }
 
-    // Permet de se déconnecter du serveur
+    /**
+     * Permet de se déconnecter du serveur
+     */
     public void disconnect() {
         try {
             // Envoie un message de deconnexion simple au serveur
@@ -173,9 +189,16 @@ public class Client extends Thread implements ITchat {
         }
     }
 
-    // Prend un Message en paramètre et l'affiche au client
+    /**
+     * Prend un Message en paramètre et l'affiche au client
+     */
     public void afficherMessage(Message message) {
-        clientUI.appendMessage(message.getUser() + " : " + message.getMessage());
+        if (message.getType().equals("gm")) {
+            clientUI.appendMessage(message.getUser() + " : " + message.getMessage());
+        } else if (message.getType().equals("pm")) {
+            clientUI.appendMessage(" From : " + message.getUser() + " to : "
+                    + message.getDestinataire() + " : " + message.getMessage());
+        }
     }
 
 }

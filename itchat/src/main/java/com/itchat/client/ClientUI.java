@@ -30,7 +30,10 @@ public class ClientUI extends Application implements EventHandler {
     private Button disconnect;
     private TextArea textArea;
     private TextField input;
+    private Label inputLabel;
     private Label status;
+    private TextField destinataire;
+    private Label destinataireLabel;
 
     /**
      * Le thread client
@@ -70,7 +73,10 @@ public class ClientUI extends Application implements EventHandler {
         status = new Label("Pret");
         input = new TextField();
         input.addEventFilter(KeyEvent.KEY_RELEASED, this);
-        bottomBox.getChildren().addAll(input, status);
+        inputLabel = new Label("Message :");
+        destinataire = new TextField();
+        destinataireLabel = new Label("Destinataire : (laissez vide pour message global)");
+        bottomBox.getChildren().addAll(destinataireLabel, destinataire, inputLabel, input, status);
         borderPane.setBottom(bottomBox);
 
         // Statut initial deconnecte
@@ -89,6 +95,7 @@ public class ClientUI extends Application implements EventHandler {
         connect.setDisable(false);
         disconnect.setDisable(true);
         input.setDisable(true);
+        destinataire.setDisable(true);
         setStatus("Pret");
     }
 
@@ -98,6 +105,7 @@ public class ClientUI extends Application implements EventHandler {
         connect.setDisable(true);
         disconnect.setDisable(false);
         input.setDisable(false);
+        destinataire.setDisable(false);
     }
 
     /**
@@ -210,10 +218,17 @@ public class ClientUI extends Application implements EventHandler {
 
             // / Recupere le texte saisi par l'utilisateur.
             String messageText = input.getText().trim();
+            String destinataireName = destinataire.getText().trim();
 
             // Envoi le message au client pour qu'il puisse l'envoyer au serveur.
-            client.sendMessage(messageText, "gm");
+
+            if (destinataireName.equals("")) {
+                client.sendMessage(messageText, "gm");
+            } else {
+                client.sendMessage(messageText, "pm", destinataireName);
+            }
             input.setText("");
+            destinataire.setText("");
         }
     }
 
