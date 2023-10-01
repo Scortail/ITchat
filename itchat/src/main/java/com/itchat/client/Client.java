@@ -11,9 +11,8 @@ import java.nio.channels.SelectionKey;
 import java.nio.channels.Selector;
 import java.nio.channels.SocketChannel;
 import java.nio.charset.StandardCharsets;
-import java.util.ArrayList;
 import java.util.Iterator;
-import java.util.Set;
+import java.nio.channels.NotYetConnectedException;
 
 /**
  * Client de tchat
@@ -43,6 +42,7 @@ public class Client extends Thread implements ITchat {
             socketChannel = SocketChannel.open();
             socketChannel.configureBlocking(false);
             socketChannel.connect(new InetSocketAddress(serverIP, serverPort));
+            clientUI.setStatus("Connection en cours");
 
             // Enregistrement du SocketChannel sur un selecteur
             selector = Selector.open();
@@ -65,8 +65,12 @@ public class Client extends Thread implements ITchat {
                     } else if (key.isConnectable()) {
                         // Finalisation de la connexion et changement de l'interet via le selecteur pour
                         // la lecture
-                        socketChannel.finishConnect();
-                        socketChannel.register(selector, SelectionKey.OP_READ);
+                        if (socketChannel.finishConnect()) {
+                            socketChannel.register(selector, SelectionKey.OP_READ);
+                            clientUI.setStatus("Connecté au serveur");
+                        } else {
+                            throw new ConnectException();
+                        }
 
                         // Envoi d'un message permettant au serveur d'identifier le client
                         sendMessage("", "cm");
@@ -77,10 +81,19 @@ public class Client extends Thread implements ITchat {
             disconnect();
 
         } catch (ConnectException ce) {
+            clientUI.setStatus("Impossible de se connecter au serveur");
+            try {
+                Thread.sleep(2000); // Attendre pendant 2 secondes pour afficher l'erreur au client
+            } catch (InterruptedException e) {
+            }
             clientUI.disconnectFromServer();
-            clientUI.appendMessage("Impossible de se connecter au serveur");
         } catch (IOException ioe) {
-            clientUI.appendMessage("Vous avez était deconnecté  du serveur");
+            clientUI.setStatus("Vous avez était deconnecté  du serveur");
+            try {
+                Thread.sleep(2000); // Attendre pendant 2 secondes pour afficher l'erreur au client
+            } catch (InterruptedException e) {
+            }
+            clientUI.disconnectFromServer();
         }
     }
 
@@ -112,7 +125,10 @@ public class Client extends Thread implements ITchat {
                 }
                 bytesWritten += bytesToWrite;
             }
-        } catch (Exception e) {
+        } catch (NotYetConnectedException nyce) {
+        }
+
+        catch (Exception e) {
             e.printStackTrace();
         }
     }
@@ -136,7 +152,7 @@ public class Client extends Thread implements ITchat {
         if (bytesRead == -1) {
             // Le serveur a fermé la connexion.
             clientUI.disconnectFromServer();
-            clientUI.appendMessage("Connexion avec le serveur perdu");
+            clientUI.setStatus("Connexion avec le serveur perdu");
         } else {
             afficherMessage(Message.fromJson(messageBuilder.toString()));
         }

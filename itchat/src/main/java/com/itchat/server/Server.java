@@ -3,7 +3,6 @@ package com.itchat.server;
 import com.itchat.ITchat.*;
 
 import javafx.application.Platform;
-import javafx.concurrent.Worker;
 import java.io.IOException;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
@@ -14,13 +13,14 @@ import java.nio.channels.ServerSocketChannel;
 import java.nio.channels.SocketChannel;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.Iterator;
-import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Processus serveur qui ecoute les connexion entrantes,
@@ -34,18 +34,19 @@ public class Server extends Thread implements ITchat {
     private int port;
     private InetAddress ipAdress;
     private Selector selector;
-    private static Map<SocketChannel, String> connectedClients = new HashMap<>();
-    private static Map<SocketChannel, Long> nonidentifiedClients = new HashMap<>();
+    private static Map<SocketChannel, ArrayList<Object>> connectedClients = new ConcurrentHashMap<>();
+    private static Map<SocketChannel, Long> nonidentifiedClients = new ConcurrentHashMap<>();
     private static final long USER_TIMEOUT = 10000;
     private ServerSocketChannel serverSocketChannel;
-    private ByteBuffer buffer = ByteBuffer.allocate(ITchat.BUFFER_SIZE);
     private DateTimeFormatter formatter = DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm:ss");
+    private ExecutorService threadPool;
 
     public Server(int port, InetAddress ipAdress, ServerUI serverUI) {
 
         this.port = port;
         this.ipAdress = ipAdress;
         this.serverUI = serverUI;
+        this.threadPool = Executors.newFixedThreadPool(10);
     }
 
     public void run() {
@@ -73,33 +74,38 @@ public class Server extends Thread implements ITchat {
 
                 // Boucle pour traiter le flux entrant
                 while (keyIterator.hasNext()) {
+                    System.out.println("test" + selector.keys().size());
                     SelectionKey key = keyIterator.next();
 
-                    if (key.isAcceptable()) {
+                    if (!key.isValid()) {
+                        key.cancel();
+                    } else if (key.isAcceptable()) {
                         acceptClientConnection(serverSocketChannel, selector);
 
-                    } else if (key.isReadable()) {
-                        readAndSentMessage((SocketChannel) key.channel());
+                    } else if (key.isReadable()
+                            && ((boolean) connectedClients.get((SocketChannel) key.channel())
+                                    .get(1) == false)) {
+                        connectedClients.get((SocketChannel) key.channel()).set(1, true);
+                        threadPool.submit(() -> {
+                            readAndSentMessage((SocketChannel) key.channel());
+                        });
                     }
                     keyIterator.remove();
                 }
                 // Vérifiez si le délai d'attente du nom d'utilisateur est dépassé pour chaque
                 // client non identifié
                 long currentTime = System.currentTimeMillis();
-                List<SocketChannel> clientsToRemove = new ArrayList<>();
                 for (Map.Entry<SocketChannel, Long> entry : nonidentifiedClients.entrySet()) {
                     SocketChannel channel = entry.getKey();
                     long connectionTime = entry.getValue();
                     if (currentTime - connectionTime > USER_TIMEOUT) {
-                        clientsToRemove.add(channel);
+                        // Supprimez les clients non identifiés dont le délai d'attente a été dépassé
                         System.out.println(
                                 "Délai d'attente pour le nom d'utilisateur dépassé, fermeture de la connexion.");
+                        nonidentifiedClients.remove(channel);
+                        connectedClients.remove(channel);
+                        channel.close();
                     }
-                }
-                // Supprimez les clients non identifiés dont le délai d'attente a été dépassé
-                for (SocketChannel channelToRemove : clientsToRemove) {
-                    nonidentifiedClients.remove(channelToRemove);
-                    channelToRemove.close();
                 }
             }
             stopServer();
@@ -111,6 +117,7 @@ public class Server extends Thread implements ITchat {
     public Message read(SocketChannel clientChannel) {
         StringBuilder messageBuilder = new StringBuilder(); // Utilisation d'un StringBuilder pour construire la chaîne
                                                             // de caractères.
+        ByteBuffer buffer = ByteBuffer.allocate(ITchat.BUFFER_SIZE);
         try {
             int bytesRead;
             while ((bytesRead = clientChannel.read(buffer)) > 0) {
@@ -134,7 +141,7 @@ public class Server extends Thread implements ITchat {
 
         } catch (IOException e) {
             sendLogToUI(LocalDateTime.now().format(formatter) + " : " + "La connexion avec "
-                    + connectedClients.get(clientChannel) + " s'est interrompu");
+                    + connectedClients.get(clientChannel).get(0) + " s'est interrompu");
             disconnectClient(clientChannel);
             return null;
         }
@@ -150,10 +157,15 @@ public class Server extends Thread implements ITchat {
         // Enregistre l'heure à laquelle le client s'est connecté
         long connectionTime = System.currentTimeMillis();
         nonidentifiedClients.put(clientChannel, connectionTime);
+        ArrayList<Object> list = new ArrayList<Object>();
+        list.add("");
+        list.add(false);
+        connectedClients.put(clientChannel, list);
         System.out.println("Nouvelle connexion client établie");
     }
 
     public void readAndSentMessage(SocketChannel clientChannel) {
+        System.out.println("je suis :" + currentThread());
 
         Message message = read(clientChannel);
         if (message != null && message.getUser() != null) {
@@ -162,7 +174,8 @@ public class Server extends Thread implements ITchat {
             if (message.getType().equals("cm") && nonidentifiedClients.containsKey(clientChannel)) {
                 sendLogToUI(LocalDateTime.now().format(formatter) + " " + message.getUser() + " s'est connecté.");
                 nonidentifiedClients.remove(clientChannel);
-                connectedClients.put(clientChannel, message.getUser());
+                // On associe au socketChannel le nom du client
+                connectedClients.get(clientChannel).set(0, message.getUser());
 
                 // Message de déconnexion
             } else if (message.getType().equals("dm")) {
@@ -175,9 +188,11 @@ public class Server extends Thread implements ITchat {
                 broadcastMessage(message);
             }
         }
+        connectedClients.get(clientChannel).set(1, false);
     }
 
     private void broadcastMessage(Message message) {
+        ByteBuffer buffer = ByteBuffer.allocate(ITchat.BUFFER_SIZE);
 
         try {
             // Conversion de la chaîne JSON en tableau d'octets
@@ -194,7 +209,7 @@ public class Server extends Thread implements ITchat {
                 buffer.flip();
 
                 // Envoie des données à tous les clients
-                for (Map.Entry<SocketChannel, String> entry : connectedClients.entrySet()) {
+                for (Map.Entry<SocketChannel, ArrayList<Object>> entry : connectedClients.entrySet()) {
                     SocketChannel channel = entry.getKey();
                     if (channel.isOpen()) {
                         channel.write(buffer);
@@ -216,7 +231,7 @@ public class Server extends Thread implements ITchat {
             // Ferme la connexion avec le serveur
             if (clientChannel != null && clientChannel.isConnected()) {
                 clientChannel.close();
-                sendLogToUI(LocalDateTime.now().format(formatter) + " " + connectedClients.get(clientChannel)
+                sendLogToUI(LocalDateTime.now().format(formatter) + " " + connectedClients.get(clientChannel).get(0)
                         + "s'est déconnecté.");
                 connectedClients.remove(clientChannel);
             }
@@ -227,6 +242,11 @@ public class Server extends Thread implements ITchat {
 
     public void stopServer() {
         try {
+
+            // Arrêtez le pool de threads
+            threadPool.shutdown();
+            // Attendre que toutes les tâches en cours se terminent (ou délai d'attente)
+            threadPool.awaitTermination(10, TimeUnit.SECONDS); // Ajustez le délai d'attente si nécessaire
             // Fermer toutes les connexions client
             for (SocketChannel clientChannel : connectedClients.keySet()) {
                 disconnectClient(clientChannel);
@@ -243,6 +263,8 @@ public class Server extends Thread implements ITchat {
             }
         } catch (IOException e) {
             e.printStackTrace();
+        } catch (InterruptedException ie) {
+            ie.printStackTrace();
         }
     }
 

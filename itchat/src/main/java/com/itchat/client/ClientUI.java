@@ -1,6 +1,7 @@
 package com.itchat.client;
 
 import javafx.application.Application;
+import javafx.application.Platform;
 import javafx.event.Event;
 import javafx.event.EventHandler;
 import javafx.scene.Scene;
@@ -97,7 +98,6 @@ public class ClientUI extends Application implements EventHandler {
         connect.setDisable(true);
         disconnect.setDisable(false);
         input.setDisable(false);
-        setStatus("Connecté au serveur");
     }
 
     /**
@@ -124,7 +124,9 @@ public class ClientUI extends Application implements EventHandler {
      * @param message
      */
     public void setStatus(String message) {
-        status.setText(message);
+        Platform.runLater(() -> {
+            status.setText(message);
+        });
     }
 
     /**
